@@ -1,25 +1,59 @@
-CPP_STANDARD := c++17
-CXXFLAGS := -O3 -fPIC -std=$(CPP_STANDARD)
-PREFIX:=.
+CXX := g++
+CXX_STANDARD := c++2a
+CXXFLAGS := -O3 -fPIC -std=$(CXX_STANDARD)
+INCLUDES := -Iinclude/hls4ml
+PREFIX := .
+
+CURDIR_FULLPATH := $(shell readlink -m ${PWD})
+PREFIX_FULLPATH := $(shell readlink -m $(PREFIX))
 
 .DEFAULT_GOAL := all
-.PHONY: clean all install
+.PHONY: all install test clean
 
-HLS4ML_INCLUDE := include/hls4ml/
-INCLUDES := -I$(HLS4ML_INCLUDE)
+# -----------------------------------------------------------------------------
+# Shared Library
+# -----------------------------------------------------------------------------
+SHAREDLIB_DIR := $(PREFIX)/lib64
+SHAREDLIB_NAME := emulator_interface
+SHAREDLIB := $(SHAREDLIB_DIR)/lib$(SHAREDLIB_NAME).so
 
-EMULATOR_LIB:=libemulator_interface.so
-all: $(EMULATOR_LIB)
-	@echo All done
+# -----------------------------------------------------------------------------
+# Unit Tests
+# -----------------------------------------------------------------------------
+TEST_MODEL_PREFIX := test/TestModel
+TEST_MODEL_SRC := $(wildcard $(TEST_MODEL_PREFIX)*.cc)
+TEST_MODEL_SO := $(TEST_MODEL_SRC:.cc=.so)
 
-install: all
-	@rm -rf $(PREFIX)/lib64
-	@mkdir -p $(PREFIX)/lib64
-	cp $(EMULATOR_LIB) $(PREFIX)/lib64
-	@if [ "$(PREFIX)" != "." ] ; then rm -rf $(PREFIX)/include; cp -r include $(PREFIX)/include; fi
+TEST_MODELWRAPPER := test/testModelWrapper
 
-$(EMULATOR_LIB): src/hls4ml/emulator.cc
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -shared $^ -o $@
+# -----------------------------------------------------------------------------
+# Make Rules
+# -----------------------------------------------------------------------------
+$(SHAREDLIB): src/hls4ml/ModelWrapper.cc
+	mkdir -p $(SHAREDLIB_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -shared -ldl $< -o $@
+
+$(TEST_MODEL_PREFIX)%.so: $(TEST_MODEL_PREFIX)%.cc
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -shared $< -o $@
+
+$(TEST_MODELWRAPPER): $(TEST_MODELWRAPPER).cc $(SHAREDLIB)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $< -L$(SHAREDLIB_DIR) -l$(SHAREDLIB_NAME) -o $@
+
+# -----------------------------------------------------------------------------
+# Make Targets
+# -----------------------------------------------------------------------------
+all: $(SHAREDLIB)
+
+install: $(SHAREDLIB)
+ifneq ("$(PREFIX_FULLPATH)","$(CURDIR_FULLPATH)")
+	rm -rf $(PREFIX)/include && cp -r include $(PREFIX)/include
+endif
+
+test: $(TEST_MODELWRAPPER) $(TEST_MODEL_SO)
+	LD_LIBRARY_PATH=$(SHAREDLIB_DIR):test:${LD_LIBRARY_PATH} $(TEST_MODELWRAPPER)
 
 clean:
-	rm -f $(EMULATOR_LIB)
+	rm -rf $(SHAREDLIB_DIR) $(TEST_MODEL_SO) $(TEST_MODELWRAPPER)
+ifneq ("$(PREFIX_FULLPATH)","$(CURDIR_FULLPATH)")
+	rm -rf $(PREFIX)/include
+endif
